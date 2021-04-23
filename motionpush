@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+
+# Send motion notifications from motionEye to Pushover, Telegram and Gotify.
+
+###########
+# Globals #
+###########
+
+PUSHOVER_PRIORITY_NORMAL=0
+PUSHOVER_PRIORITY_HIGH=1
+PUSHOVER_PRIORITY="${PUSHOVER_PRIORITY_NORMAL}"
+GOTIFY_PRIORITY_NORMAL=4
+GOTIFY_PRIORITY_HIGH=8
+GOTIFY_PRIORITY="${GOTIFY_PRIORITY_NORMAL}"
+CONFIG_FILE="/etc/motionpush.conf"
+VERBOSE=false
+
+#############
+# Functions #
+#############
+
+function error() {
+  echo "$@" >&2
+}
+
+function log() {
+  if [[ "${VERBOSE}" == true ]]; then
+     echo "${@}"
+  fi
+}
+
+function usage() {
+  echo "Usage:"
+  echo "  ${0} [OPTIONS] TIME"
+  echo
+  echo "Description:"
+  echo "  Send motion notifications from motionEye to Pushover, Telegram and Gotify."
+  echo "  TIME must be formatted as HH:MM."
+  echo
+  echo "Options:"
+  echo "  -c FILE path to configuration file (default: ${CONFIG_FILE})"
+  echo "  -v      explain what is being done"
+  echo "  -h      output usage and exit"
+}
+
+# Check if time is in interval
+# Arguments:
+#   $1 time to check (HH:MM)
+#   $2 time interval (HH:MM-HH:MM)
+# Returns:
+#   0 if time is in interval, 1 otherwise
+function is_between() {
+  local start="${2%-*}"
+  local end="${2#*-}"
+  if [[ "${start}" > "${end}" ]]; then
+    # Time interval crossing days
+    if [[ "${1}" > "${start}" || "${1}" == "${start}" || \
+      "${1}" < "${end}" || "${1}" == "${end}" ]]; then
+      return 0
+    fi
+  elif [[ ("${1}" > "${start}" || "${1}" == "${start}") && \
+    ("${1}" < "${end}" || "${1}" == "${end}") ]]; then
+    return 0
+  fi
+  return 1
+}
+
+########
+# Main #
+########
+
+# Parse arguments
+while getopts ':hvc:' option; do
+  case "${option}" in
+  c)
+    CONFIG_FILE="${OPTARG}"
+    ;;
+  v)
+    VERBOSE=true
+    ;;
+  h)
+    usage
+    exit 0
+    ;;
+  :) # Missing option argument
+    usage
+    exit 1
+    ;;
+  ?) # Unknown option
+    usage
+    exit 1
+    ;;
+  esac
+done
+
+# Check time argument
+shift $((OPTIND - 1))
+if [[ -z "$*" ]]; then
+  usage
+  exit 1
+fi
+
+# Check curl installation
+if ! which curl >/dev/null 2>&1; then
+  error "Error: curl is not installed"
+  exit 1
+fi
+
+# Read configuration
+log "Reading configuration file: ${CONFIG_FILE}"
+if ! source "${CONFIG_FILE}" >/dev/null 2>&1; then
+  error "Error: failed to read configuration file"
+  exit 1
+fi
+
+# Check do not disturb hours
+for interval in "${DND_HOURS[@]}"; do
+  if is_between "${1}" "${interval}"; then
+    log "Time ${1} is in do not disturb interval ${interval}, exiting"
+    exit 0
+  fi
+done
+
+# Check high-priority hours
+for interval in "${PRIORITY_HOURS[@]}"; do
+  if is_between "${1}" "${interval}"; then
+    log "Time ${1} is in high-priority interval ${interval}, setting notification priority to high"
+    PUSHOVER_PRIORITY="${PUSHOVER_PRIORITY_HIGH}"
+    GOTIFY_PRIORITY="${GOTIFY_PRIORITY_HIGH}"
+  fi
+done
+
+# Send to Pushover
+if [[ "${PUSHOVER_ENABLED}" == true && "${#PUSHOVER_DEVICES[@]}" -gt 0 ]]; then
+  devices="$(printf ",%s" "${PUSHOVER_DEVICES[@]}")"
+  devices="${devices#,}"
+  log "[Pushover] sending notification to devices: ${devices//,/, }"
+  curl --silent \
+    --data token="${PUSHOVER_TOKEN}" \
+    --data user="${PUSHOVER_KEY}" \
+    --data device="${devices}" \
+    --data priority="${PUSHOVER_PRIORITY}" \
+    --data html="1" \
+    --data title="${PUSHOVER_TITLE}" \
+    --data message="${PUSHOVER_BODY}" \
+    --data url="${PUSHOVER_URL}" \
+    --data url_title="${PUSHOVER_URL_TITLE}" \
+    "https://api.pushover.net/1/messages.json" \
+    1>/dev/null
+fi
+
+# Send to Telegram
+if [[ "${TELEGRAM_ENABLED}" == true && "${#TELEGRAM_CHATS[@]}" -gt 0 ]]; then
+  for chat in "${TELEGRAM_CHATS[@]}"; do
+    log "[Telegram] sending notification to chat ID: ${chat}"
+    curl --silent \
+      --data chat_id="${chat}" \
+      --data parse_mode="HTML" \
+      --data text="<b>${TELEGRAM_TITLE}</b>"$'\n\n'"${TELEGRAM_BODY}" \
+      "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+      1>/dev/null
+  done
+fi
+
+# Send to Gotify
+if [[ "${GOTIFY_ENABLED}" == true ]]; then
+  log "[Gotify] sending notification to application token: ${GOTIFY_TOKEN}"
+  curl --silent --header "content-type: application/json" --data \
+    "{
+      \"title\":\"${GOTIFY_TITLE}\",
+      \"message\":\"${GOTIFY_BODY}\",
+      \"priority\":${GOTIFY_PRIORITY},
+      \"extras\":{
+        \"client::notification\":{
+          \"click\":{\"url\":\"${GOTIFY_URL}\"}
+        }
+      }
+    }" \
+    "${GOTIFY_API_URL%/}/message?token=${GOTIFY_TOKEN}" \
+    1>/dev/null
+fi
