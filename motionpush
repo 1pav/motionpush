@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Send motion notifications from motionEye to Pushover, Telegram and Gotify.
+# Send push notifications from motionEye to Telegram, Pushover and Gotify.
 
 ###########
 # Globals #
@@ -34,7 +34,7 @@ function usage() {
   echo "  ${0} [OPTIONS] TIME"
   echo
   echo "Description:"
-  echo "  Send motion notifications from motionEye to Pushover, Telegram and Gotify."
+  echo "  Send push notifications from motionEye to Telegram, Pushover and Gotify."
   echo "  TIME must be formatted as HH:MM."
   echo
   echo "Options:"
