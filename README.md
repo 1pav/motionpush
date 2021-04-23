@@ -14,7 +14,7 @@ high-priority notifications during specified time intervals. High-priority notif
 After downloading this repository, copy the script and its configuration, making sure to mark the script as executable:
 
 ```
-git clone ${GIT_URL}
+git clone git@github.com:1pav/motionpush.git
 cd ./motionpush
 cp motionpush /usr/local/bin
 cp example.conf /etc/motionpush.conf
